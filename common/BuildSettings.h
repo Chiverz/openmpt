@@ -158,6 +158,8 @@
 #if defined(LIBOPENMPT_BUILD_TEST)
 #define ENABLE_TESTS
 #define MPT_ENABLE_PLAYBACK_TRACE
+#elif defined(LIBOPENMPT_BUILD_SCRIPTING)
+// Headless scripting build (scripting/python): keep module saving enabled.
 #else
 #define MODPLUG_NO_FILESAVE
 #endif
