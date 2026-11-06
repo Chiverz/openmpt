@@ -18,6 +18,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from .song import Song
 
 INTERPOLATION = {"nearest": 0, "none": 0, "linear": 1, "cubic": 2, "sinc": 3}
+AMIGA = {None: 0, "off": 0, "a500": 1, "a1200": 2, "unfiltered": 3}
 
 
 def _db(x: float) -> float:
@@ -69,12 +70,15 @@ class RenderReport:
 
 
 def render_pcm(song: "Song", samplerate: int = 44100, channels: int = 2, interpolation: str = "sinc",
-               stereo_separation: int = 100, max_seconds: float = 600.0, repeat: int = 0) -> array.array:
+               stereo_separation: int = 100, max_seconds: float = 600.0, repeat: int = 0,
+               amiga: Optional[str] = None) -> array.array:
     """Render to an array of interleaved float32 samples."""
     if interpolation not in INTERPOLATION:
         raise ValueError(f"interpolation must be one of {sorted(INTERPOLATION)}")
+    if amiga not in AMIGA:
+        raise ValueError(f"amiga must be one of {[k for k in AMIGA if k]}")
     raw = song._m.render(samplerate, channels, INTERPOLATION[interpolation],
-                         int(round(stereo_separation / 100 * 128)), float(max_seconds), int(repeat))
+                         int(round(stereo_separation / 100 * 128)), float(max_seconds), int(repeat), AMIGA[amiga])
     pcm = array.array("f")
     pcm.frombytes(raw)
     return pcm
@@ -82,7 +86,8 @@ def render_pcm(song: "Song", samplerate: int = 44100, channels: int = 2, interpo
 
 def render(song: "Song", path: Union[str, os.PathLike, None] = None, *, samplerate: int = 44100, channels: int = 2,
            interpolation: str = "sinc", stereo_separation: int = 100, normalize: bool = True,
-           target_db: float = -1.0, max_seconds: float = 600.0, repeat: int = 0, bits: int = 16) -> RenderReport:
+           target_db: float = -1.0, max_seconds: float = 600.0, repeat: int = 0, bits: int = 16,
+           amiga: Optional[str] = None) -> RenderReport:
     """Render the song (one pass through the order list) to a WAV file.
 
     interpolation: sample interpolation for instruments left on "default" resampling
@@ -92,8 +97,10 @@ def render(song: "Song", path: Union[str, os.PathLike, None] = None, *, samplera
     normalize: scale so the peak sits at `target_db` dBFS. The module itself is unchanged.
     repeat: extra loops of the song (0 = play once).
     bits: 16 (PCM) or 32 (float WAV).
+    amiga: "a500", "a1200" or "unfiltered" emulates the Amiga's Paula chip (resampling and output
+      filter) for MOD songs; overrides `interpolation` for them. None = off.
     """
-    pcm = render_pcm(song, samplerate, channels, interpolation, stereo_separation, max_seconds, repeat)
+    pcm = render_pcm(song, samplerate, channels, interpolation, stereo_separation, max_seconds, repeat, amiga)
     frames = len(pcm) // channels
     sec = samplerate * channels
     try:

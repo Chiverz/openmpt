@@ -36,7 +36,7 @@ next script can load it again. Think of it as `bpy` for chiptune.
 song = mpt.Song.new("it", channels=6, title="Name", tempo=150, speed=6, rows=64)
 song = mpt.Song.load("song.it")          # reads any format OpenMPT supports
 song.save("out/song.it")                 # always in the song's own format
-report = song.render("out/song.wav", interpolation="sinc", normalize=True, repeat=0)
+report = song.render("out/song.wav", interpolation="sinc", normalize=True, repeat=0, amiga=None)
 print(song.describe(max_rows=16))        # text dump for reading a song
 song.duration                            # seconds, one pass through the order list
 ```
@@ -172,6 +172,18 @@ The `fx.*` helpers pick the right command for the song's format, so prefer them 
 | `s3m` | Scream Tracker | No instruments or envelopes; note-off is converted to note cut |
 | `mod` | ProTracker / Amiga | Typically 4 channels; no volume column, envelopes or note-off (converted to an `EC0` note cut); 8-bit samples |
 
+**Amiga / MOD tips** (see `examples/arena_anthem.py`):
+
+- **Note range:** ProTracker plays only notes C-4..B-6 (OpenMPT naming).
+- **Sample tuning:** a sample with C-5 rate 8363 Hz plays at its recorded rate on C-5, and at twice that rate on C-6.
+  - Render each sample at `8363 * 2**(semitones_above_C5 / 12)` Hz.
+  - Keep a "root" mapping so melodies are written at real pitch and shifted onto the sample.
+  - Bass samples are usually recorded low and triggered high.
+- **No envelopes:** bake decays into one-shot samples. Shape sustained loops with `fx.vol_slide`, `fx.note_cut` and the `volume=` argument (stored as `Cxx`).
+- **One effect per cell:** only one of volume, arpeggio, slide and so on fits in a cell.
+- **Panning:** channels are hard-panned Left Right Right Left. Put kick and snare on one channel, hats/FX on another, then bass and lead.
+- **Rendering:** `song.render(..., amiga="a500")` emulates Paula's resampling and the A500 output filter.
+
 A song's format is fixed at creation. Saving always uses that format, and
 converting between formats is a tracker GUI feature. To change format, rebuild
 the song with your script.
@@ -181,7 +193,7 @@ the song with your script.
 ```
 python -m mptscript run script.py [--play]
 python -m mptscript info song.it [--rows 16] [--no-patterns]
-python -m mptscript render song.it [out.wav] [--interpolation nearest|linear|cubic|sinc] [--repeat N] [--play]
+python -m mptscript render song.it [out.wav] [--interpolation nearest|linear|cubic|sinc] [--amiga a500|a1200] [--repeat N] [--play]
 python -m mptscript play out.wav
 python -m mptscript letters it|xm|s3m|mod|mptm
 ```

@@ -3,7 +3,7 @@
   run SCRIPT.py [--play]           run a composition script (it saves/renders itself)
   info SONG [--rows N] [--no-patterns]
                                    print the song as text (instruments, order, pattern grid)
-  render SONG [OUT.wav] [--interpolation nearest|linear|cubic|sinc] [--repeat N] [--play]
+  render SONG [OUT.wav] [--interpolation nearest|linear|cubic|sinc] [--amiga a500|a1200] [--repeat N] [--play]
   play FILE.wav|SONG               play a WAV (or render a module to a temp WAV and play it)
   letters FORMAT                   list effect / volume-column letters for it|xm|s3m|mod|mptm
 """
@@ -51,7 +51,8 @@ def _cmd_render(args) -> int:
     from .song import Song
     song = Song.load(args.song)
     out = args.out or os.path.splitext(args.song)[0] + ".wav"
-    report = song.render(out, interpolation=args.interpolation, repeat=args.repeat, normalize=not args.no_normalize)
+    report = song.render(out, interpolation=args.interpolation, repeat=args.repeat, normalize=not args.no_normalize,
+                         amiga=args.amiga)
     print(report)
     if args.play:
         play(out)
@@ -105,6 +106,8 @@ def main(argv=None) -> int:
     d.add_argument("--interpolation", default="sinc", choices=["nearest", "linear", "cubic", "sinc"])
     d.add_argument("--repeat", type=int, default=0)
     d.add_argument("--no-normalize", action="store_true")
+    d.add_argument("--amiga", choices=["a500", "a1200", "unfiltered"], default=None,
+                   help="emulate Amiga Paula resampling/filter (MOD files)")
     d.add_argument("--play", action="store_true")
     d.set_defaults(func=_cmd_render)
 

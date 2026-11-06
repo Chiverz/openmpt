@@ -874,7 +874,7 @@ public:
 	}
 
 	// Returns interleaved float32 PCM as bytes.
-	py::bytes Render(int samplerate, int channels, int interpolation, int stereo_separation, double max_seconds, int repeat)
+	py::bytes Render(int samplerate, int channels, int interpolation, int stereo_separation, double max_seconds, int repeat, int amiga)
 	{
 		if(samplerate < 8000 || samplerate > 192000)
 			throw py::value_error("samplerate must be 8000..192000");
@@ -896,6 +896,8 @@ public:
 		case 2: rs.SrcMode = SRCMODE_CUBIC; break;
 		default: rs.SrcMode = SRCMODE_SINC8LP; break;
 		}
+		// Paula (Amiga) resampler + output filter emulation; only affects Amiga-flagged songs (MOD).
+		rs.emulateAmiga = static_cast<Resampling::AmigaFilter>(std::clamp(amiga, 0, 3));
 		s.SetResamplerSettings(rs);
 
 		s.PrecomputeSampleLoops(false);
@@ -1033,5 +1035,5 @@ PYBIND11_MODULE(_core, m)
 		.def("instrument_set", &Module::InstrumentSet)
 		.def("duration", &Module::Duration)
 		.def("render", &Module::Render, py::arg("samplerate") = 44100, py::arg("channels") = 2, py::arg("interpolation") = 3,
-			py::arg("stereo_separation") = 128, py::arg("max_seconds") = 600.0, py::arg("repeat") = 0);
+			py::arg("stereo_separation") = 128, py::arg("max_seconds") = 600.0, py::arg("repeat") = 0, py::arg("amiga") = 0);
 }

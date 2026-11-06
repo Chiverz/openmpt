@@ -606,6 +606,7 @@ class Pattern:
                 new.volcmd, new.vol = old.volcmd, old.vol
             if effect is None and not new.command:
                 new.command, new.param = old.command, old.param
+        new = self.song._adapt_cell(new)
         self.song._m.cell_set(self.index, row, channel, *new.astuple())
 
     def set_effect(self, row: int, channel: int, effect: Union[Effect, str, Tuple[int, int]]) -> None:

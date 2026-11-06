@@ -67,6 +67,8 @@ def test_note_off_adapted_to_format():
     mod = small_song("mod")
     assert mod.patterns[0][12, 0].note == 0
     assert mod.patterns[0][12, 0].astuple()[4:] == (mpt.EFFECTS["MODCMDEX"], 0xC0)
+    mod.patterns[0].set(20, 1, "^^^")  # set() must adapt too
+    assert mod.patterns[0][20, 1].astuple() == (0, 0, 0, 0, mpt.EFFECTS["MODCMDEX"], 0xC0)
 
 
 @pytest.mark.parametrize("fmt", ["it", "xm", "mptm"])
@@ -253,4 +255,15 @@ def test_examples_run(tmp_path):
                    env=env, capture_output=True)
     quest = mpt.Song.load(os.path.join(out, "overworld_quest.it"))
     assert abs(quest.duration - 41.6) < 0.01  # intro + one pass of the loop (position jump back to order 1)
+    subprocess.run([sys.executable, "-m", "mptscript", "run", os.path.join(EXAMPLES, "arena_anthem.py")], check=True,
+                   env=env, capture_output=True)
+    anthem = mpt.Song.load(os.path.join(out, "arena_anthem.mod"))
+    assert anthem.format == "mod" and anthem.num_channels == 4 and abs(anthem.duration - 69.12) < 0.01
     assert (tmp_path / "minimal.wav").exists()
+
+
+def test_amiga_emulation_changes_mod_render():
+    song = small_song("mod")
+    assert mpt.render_pcm(song, max_seconds=2, amiga="a500") != mpt.render_pcm(song, max_seconds=2)
+    with pytest.raises(ValueError):
+        mpt.render_pcm(song, amiga="c64")
