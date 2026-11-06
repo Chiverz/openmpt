@@ -19,7 +19,10 @@ from . import _core
 from . import chip
 from . import effects
 from . import effects as fx
+from . import compose
 from . import notes
+from . import opl
+from . import plugins
 from .render import RenderReport, play, render, render_pcm
 from .song import EFFECTS, NNA, VOLCMDS, Cell, Channel, Instrument, Pattern, Sample, Song
 
@@ -31,5 +34,5 @@ load = Song.load
 __all__ = [
     "Song", "Pattern", "Cell", "Channel", "Sample", "Instrument", "RenderReport",
     "new", "load", "render", "render_pcm", "play",
-    "chip", "fx", "effects", "notes", "EFFECTS", "VOLCMDS", "NNA",
+    "chip", "fx", "effects", "notes", "opl", "plugins", "compose", "EFFECTS", "VOLCMDS", "NNA",
 ]

@@ -72,6 +72,18 @@ class Song:
         self.path = path
         self._fx_letters: Optional[Dict[str, int]] = None
         self._vol_letters: Optional[Dict[str, int]] = None
+        self._seen_messages: set = set()
+        self.messages: List[Tuple[str, str]] = []
+        self._drain_log()
+
+    def _drain_log(self) -> None:
+        """Turn OpenMPT engine log messages (e.g. format limitations hit while saving) into Python
+        warnings, once per distinct message, and keep them in ``song.messages``."""
+        for level, text in self._m.take_messages():
+            self.messages.append((level, text))
+            if level in ("warning", "error") and text not in self._seen_messages:
+                self._seen_messages.add(text)
+                warnings.warn(f"OpenMPT: {text}", stacklevel=3)
 
     # --- Construction / IO --------------------------------------------------
 
@@ -110,6 +122,7 @@ class Song:
         os.makedirs(d, exist_ok=True)
         self._m.save(os.path.abspath(path), "")
         self.path = path
+        self._drain_log()
         return path
 
     def render(self, path: Union[str, os.PathLike, None] = None, **kwargs) -> "RenderReport":
@@ -127,15 +140,27 @@ class Song:
         with tempfile.TemporaryDirectory() as td:
             p = os.path.join(td, "copy." + self.format)
             self._m.save(p, "")
+            self._m.take_messages()  # already reported by save()/load() of the original
             with open(p, "rb") as f:
-                return Song(_core.Module.load(f.read()), self.path)
+                module = _core.Module.load(f.read())
+            module.take_messages()
+            return Song(module, self.path)
 
     # --- Song properties --------------------------------------------------------
 
     format = property(lambda self: self._m.format, doc="it | mptm | xm | s3m | mod")
     title = property(lambda self: self._m.title, lambda self, v: setattr(self._m, "title", v))
     artist = property(lambda self: self._m.artist, lambda self, v: setattr(self._m, "artist", v))
-    message = property(lambda self: self._m.message, lambda self, v: setattr(self._m, "message", v))
+    @property
+    def message(self) -> str:
+        """Song message / comments, with '\n' line breaks."""
+        return self._m.message
+
+    @message.setter
+    def message(self, value: str) -> None:
+        if value and not self.limits["has_comments"]:
+            warnings.warn(f"the {self.format} format cannot store a song message; it will not be saved", stacklevel=2)
+        self._m.message = value
     tempo = property(lambda self: self._m.tempo, lambda self, v: setattr(self._m, "tempo", int(v)),
                      doc="Initial tempo (BPM in classic tempo mode with 4 rows per beat at speed 6).")
     speed = property(lambda self: self._m.speed, lambda self, v: setattr(self._m, "speed", int(v)),
@@ -180,6 +205,8 @@ class Song:
 
     @num_channels.setter
     def num_channels(self, n: int) -> None:
+        """Change the channel count. Pattern data in remaining channels is kept; data in removed
+        channels is discarded (it does not come back if the count is raised again)."""
         self._m.num_channels = int(n)
 
     @property
@@ -240,7 +267,8 @@ class Song:
     def add_instrument(self, name: str, wave: Wave, *, volume: int = 64, envelope: Optional[dict] = None,
                        fadeout: Optional[int] = None, pan: Optional[int] = None, resampling: Optional[str] = None,
                        nna: str = "cut", pitch_envelope: Optional[dict] = None, panning_envelope: Optional[dict] = None,
-                       vibrato: Optional[Tuple[int, int, int]] = None, index: Optional[int] = None) -> int:
+                       vibrato: Optional[Tuple[int, int, int]] = None, index: Optional[int] = None,
+                       filter: Optional[Tuple[int, int]] = None, plugin: Optional[int] = None) -> int:
         """Add an instrument built from `wave` and return the number to use in patterns.
 
         IT/XM/MPTM: creates a sample *and* an instrument with the same number, so envelopes
@@ -250,6 +278,9 @@ class Song:
         volume: default note volume 0..64. pan: 0..256 or None. resampling: nearest (crisp
         chiptune), linear, cubic, sinc, default (falls back to the wave's suggestion).
         vibrato: (rate, depth, sweep) auto-vibrato.
+        filter: (cutoff 0..127, resonance 0..127) resonant low-pass (IT/MPTM). For filter sweeps add
+          ``pitch_envelope=dict(chip.envelope(...), filter=True)``.
+        plugin: route this instrument through an effect plugin slot (see :meth:`add_plugin`).
         """
         if index is None:
             index = max(self._m.num_samples, self._m.num_instruments) + 1
@@ -278,8 +309,91 @@ class Song:
             props["fadeout"] = 0
         if pan is not None:
             props["pan"] = int(pan)
+        if filter is not None:
+            props["filter_cutoff"], props["filter_resonance"] = int(filter[0]), int(filter[1])
+        if plugin is not None:
+            props["plugin"] = int(plugin)
         self._m.instrument_set(index, props)
         return index
+
+    def add_opl_instrument(self, name: str, patch: Sequence[int], *, volume: int = 64, index: Optional[int] = None,
+                           fadeout: Optional[int] = None, nna: str = "cut", pan: Optional[int] = None,
+                           plugin: Optional[int] = None) -> int:
+        """Add a Yamaha OPL FM instrument (see :mod:`mptscript.opl`). Formats: s3m (OPL2) and mptm (OPL3).
+        Returns the number to use in patterns. OPL voices respond to notes, volume and pitch effects
+        like samples do; note-off (``===``) starts the release phase."""
+        if self.format not in ("s3m", "mptm"):
+            raise ValueError(f"OPL instruments need the s3m or mptm format, not {self.format}")
+        if index is None:
+            index = max(self._m.num_samples, self._m.num_instruments) + 1
+        self._m.sample_set_opl(index, [int(b) for b in patch])
+        sprops: Dict[str, Any] = {"name": name[:27], "volume": int(volume)}
+        if pan is not None and self.format == "s3m":
+            sprops["pan"] = int(pan)
+        self._m.sample_set(index, sprops)
+        if self.has_instruments:
+            self._m.instrument_new(index, index)
+            props: Dict[str, Any] = {"name": name[:31], "nna": NNA[nna]}
+            if fadeout is not None:
+                props["fadeout"] = int(fadeout)
+            if pan is not None:
+                props["pan"] = int(pan)
+            if plugin is not None:
+                props["plugin"] = int(plugin)
+            self._m.instrument_set(index, props)
+        return index
+
+    # --- Effect plugins ------------------------------------------------------
+
+    def add_plugin(self, kind: str, *, slot: Optional[int] = None, master: bool = False, dry_mix: bool = False,
+                   name: str = "", **params: float) -> int:
+        """Insert one of OpenMPT's built-in effect plugins (see :mod:`mptscript.plugins`) and
+        return its slot number (1-based). Route channels/instruments to it with
+        ``song.channels[i].plugin = slot`` / ``song.instruments[i].plugin = slot``, or set
+        ``master=True`` to process the whole mix. Parameters are normalised 0..1, by name."""
+        from .plugins import resolve
+        t = resolve(kind)
+        if slot is None:
+            slot = next(i for i in range(1, 251) if self._m.plugin_get(i) is None)
+        unknown = set(params) - set(t.params)
+        if unknown:
+            raise ValueError(f"unknown parameters for {kind}: {sorted(unknown)}; available: {t.params}")
+        self._m.plugin_set(slot, t.id1, t.id2, t.library, (name or kind)[:31], [], master, dry_mix)
+        for key, value in params.items():
+            self._m.plugin_set_param(slot, t.params.index(key), float(value))
+        return slot
+
+    def plugin(self, slot: int) -> Optional[Dict[str, Any]]:
+        """Plugin info for a slot, with parameters by name where known (None if empty)."""
+        from .plugins import TYPES
+        d = self._m.plugin_get(slot)
+        if d is None:
+            return None
+        for key, t in TYPES.items():
+            if t.id1 == d["id1"] and t.id2 == d["id2"]:
+                d["kind"] = key
+                d["params"] = dict(zip(t.params, d["params"]))
+                break
+        return d
+
+    @property
+    def plugins(self) -> Dict[int, Dict[str, Any]]:
+        """All occupied plugin slots."""
+        if not self.limits.get("has_instruments") and self.format != "xm":
+            return {}
+        out = {}
+        for slot in range(1, 251):
+            info = self.plugin(slot)
+            if info:
+                out[slot] = info
+        return out
+
+    def set_plugin_param(self, slot: int, param: str, value: float) -> None:
+        info = self.plugin(slot)
+        if info is None or "kind" not in info:
+            raise ValueError(f"no known plugin in slot {slot}")
+        from .plugins import TYPES
+        self._m.plugin_set_param(slot, TYPES[info["kind"]].params.index(param), float(value))
 
     def replace_wave(self, sample: int, wave: Wave) -> None:
         """Swap the audio of an existing sample, keeping its name/volume."""

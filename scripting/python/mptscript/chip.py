@@ -244,3 +244,159 @@ def adsr(attack: int = 0, decay: int = 6, sustain: int = 40, release: int = 12, 
     t += max(1, release)
     pts.append((t, 0))
     return envelope(pts, sustain=sustain_node)
+
+
+# --- Chip-specific generators --------------------------------------------------------------------
+
+def pwm(cycles: int = 128, period: int = 64, center: float = 0.5, depth: float = 0.4, amplitude: float = 0.55) -> Wave:
+    """C64 SID-style pulse-width modulation: a seamless loop of `cycles` pulse periods whose
+    duty sweeps sinusoidally (center +/- depth). C-5 plays middle C; the sweep speeds up with pitch."""
+    data = []
+    for k in range(cycles):
+        duty = center + depth * math.sin(2 * math.pi * k / cycles)
+        high = max(1, min(period - 1, round(period * duty)))
+        data.extend(amplitude if i < high else -amplitude for i in range(period))
+    return Wave(data, c5_speed=round(MIDDLE_C_HZ * period), loop=(0, len(data)), resampling="nearest", name="pwm pulse")
+
+
+def sid_drum(kind: str = "kick", rate: int = 22050, amplitude: float = 0.9, seed: int = 64) -> Wave:
+    """C64 drums the SID way: a noise burst for one frame, then a pitch-dropping triangle (kick/tom)
+    or noise/pulse mix (snare), the waveform-switching trick of 80s C64 composers."""
+    rnd = random.Random(seed)
+    frame = rate // 50
+    if kind == "kick":
+        n, f0, f1, tone = int(rate * 0.22), 220.0, 40.0, "tri"
+    elif kind == "tom":
+        n, f0, f1, tone = int(rate * 0.25), 300.0, 120.0, "tri"
+    elif kind == "snare":
+        n, f0, f1, tone = int(rate * 0.20), 260.0, 140.0, "noise"
+    else:
+        raise ValueError("kind must be kick, tom or snare")
+    data, ph = [], 0.0
+    for i in range(n):
+        t = i / n
+        env = (1 - t) ** 1.5
+        if i < frame or (tone == "noise" and i % 2):
+            v = rnd.random() * 2 - 1
+        else:
+            ph += (f1 + (f0 - f1) * (1 - t) ** 3) / rate
+            v = 4 * abs((ph % 1) - 0.5) - 1 if tone == "tri" else (1.0 if ph % 1 < 0.5 else -1.0)
+        data.append(v * env * amplitude)
+    return Wave(data, c5_speed=rate, name=f"sid {kind}")
+
+
+def ay_buzzer(shape: str = "saw", steps: int = 32, amplitude: float = 0.7) -> Wave:
+    """AY-3-8910 / YM2149 hardware-envelope 'buzzer' used as an audio-rate waveform (Atari ST,
+    MSX and Spectrum basses). shape 'saw' (envelope shapes 8/12) or 'triangle' (10/14); 32 steps = YM2149."""
+    if shape == "saw":
+        w = saw(length=steps * 2, steps=steps, amplitude=amplitude)
+    elif shape == "triangle":
+        w = triangle(length=steps * 2, steps=steps, amplitude=amplitude)
+    else:
+        raise ValueError("shape must be saw or triangle")
+    w.name = f"ay buzzer {shape}"
+    return w
+
+
+# YM2612-style operator routing: (modulation sources for operators 1..4, output operators).
+FM_ALGORITHMS = {
+    0: ({2: [1], 3: [2], 4: [3]}, [4]),
+    1: ({3: [1, 2], 4: [3]}, [4]),
+    2: ({3: [2], 4: [1, 3]}, [4]),
+    3: ({2: [1], 4: [2, 3]}, [4]),
+    4: ({2: [1], 4: [3]}, [2, 4]),
+    5: ({2: [1], 3: [1], 4: [1]}, [2, 3, 4]),
+    6: ({2: [1]}, [2, 3, 4]),
+    7: ({}, [1, 2, 3, 4]),
+}
+
+
+@dataclass
+class FMOp:
+    """One FM operator. ratio = frequency multiple; level = output (carriers) or modulation
+    index in cycles (modulators); attack/decay in seconds; sustain = fraction of level held."""
+    ratio: float = 1.0
+    level: float = 1.0
+    attack: float = 0.002
+    decay: float = 0.3
+    sustain: float = 0.6
+
+    def env(self, t: float) -> float:
+        if t < self.attack:
+            return t / self.attack
+        return self.sustain + (1 - self.sustain) * math.exp(-(t - self.attack) / max(1e-4, self.decay))
+
+
+def fm(ops: Sequence[FMOp], algorithm: int = 4, feedback: float = 0.0, root: str = "C-5",
+       duration: float = 1.2, target_rate: int = 32000, loop_cycles: int = 24, amplitude: float = 0.8,
+       name: str = "fm") -> Wave:
+    """4-operator FM voice in the style of the Yamaha YM2612 (Mega Drive / Genesis).
+
+    Rendered at `root` with a sample rate that is an exact multiple of the note frequency, so the
+    steady-state tail loops seamlessly and held notes keep their timbre (use integer ratios).
+    Shape overall volume and release with an instrument envelope.
+    """
+    from . import notes as _notes
+    if len(ops) != 4:
+        raise ValueError("fm() needs exactly 4 operators")
+    routing, outputs = FM_ALGORITHMS[algorithm]
+    f0 = _notes.frequency(root)
+    period = max(16, round(target_rate / f0))
+    rate = f0 * period
+    n = int(rate * duration)
+    n -= n % period
+    vals = [0.0] * 4
+    fb1 = fb2 = 0.0
+    data = []
+    two_pi = 2 * math.pi
+    for i in range(n):
+        t = i / rate
+        base = i / period
+        for k in range(4):
+            phase = base * ops[k].ratio
+            for src in routing.get(k + 1, ()):
+                phase += vals[src - 1] * ops[src - 1].level
+            if k == 0 and feedback:
+                phase += feedback * (fb1 + fb2) * 0.5
+            vals[k] = math.sin(two_pi * phase) * ops[k].env(t)
+            if k == 0:
+                fb2, fb1 = fb1, vals[0]
+        data.append(sum(vals[o - 1] * ops[o - 1].level for o in outputs) / len(outputs))
+    peak = max(abs(v) for v in data) or 1.0
+    data = [v * amplitude / peak for v in data]
+    loop_len = period * loop_cycles
+    return Wave(data, c5_speed=round(rate * MIDDLE_C_HZ / f0), loop=(n - loop_len, n), resampling="linear", name=name)
+
+
+def brr(wave: Wave) -> Wave:
+    """Run a wave through SNES BRR compression (4-bit ADPCM in 16-sample blocks, filters 0-2) to
+    get the S-DSP's characteristic grit. Loop points are moved to 16-sample block boundaries."""
+    src = [int(max(-1.0, min(1.0, x)) * 32767) for x in wave.data]
+    loop = None
+    if wave.loop:
+        start = (wave.loop[0] // 16) * 16
+        length = max(16, ((wave.loop[1] - wave.loop[0]) // 16) * 16)
+        src = src[:start + length]
+        loop = (start, start + length)
+    src += [0] * (-len(src) % 16)
+    out, p1, p2 = [], 0, 0
+    coeffs = [(0.0, 0.0), (15 / 16, 0.0), (61 / 32, -15 / 16)]
+    for b in range(0, len(src), 16):
+        block = src[b:b + 16]
+        best = None
+        for c1, c2 in coeffs:
+            for shift in range(13):
+                q1, q2, err, dec = p1, p2, 0, []
+                step = 1 << shift
+                for s in block:
+                    pred = c1 * q1 + c2 * q2
+                    nib = max(-8, min(7, int(round((s - pred) / step))))
+                    v = int(max(-32768, min(32767, pred + nib * step)))
+                    dec.append(v)
+                    err += (v - s) ** 2
+                    q2, q1 = q1, v
+                if best is None or err < best[0]:
+                    best = (err, dec, q1, q2)
+        _, dec, p1, p2 = best
+        out.extend(dec)
+    return replace(wave, data=[v / 32768 for v in out], loop=loop, name=f"{wave.name} brr")

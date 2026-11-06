@@ -61,7 +61,7 @@ def describe(song: "Song", patterns: bool = True, max_rows: Optional[int] = None
     out.append("Channels:")
     for c in range(song.num_channels):
         d = m.channel_get(c)
-        flags = " MUTED" if d["mute"] else ""
+        flags = (" MUTED" if d["mute"] else "") + (f" ->FX{d['plugin']}" if d.get("plugin") else "")
         out.append(f"  {c:2d} {d['name']!r:14} pan={d['pan']:3d} vol={d['volume']:2d}{flags}")
     out.append("")
     if m.num_instruments:
@@ -83,10 +83,27 @@ def describe(song: "Song", patterns: bool = True, max_rows: Optional[int] = None
     out.append("Samples:" if m.num_instruments else "Samples (use these numbers in patterns):")
     for i in range(1, m.num_samples + 1):
         d = m.sample_get(i)
+        if d.get("opl"):
+            from .opl import decode
+            o = decode(d["opl"])
+            mod, car = o["modulator"], o["carrier"]
+            kind = "additive" if o["additive"] else "fm"
+            out.append(f"  {i:2d} {d['name']!r:22} OPL FM vol={d['volume']} fb={o['feedback']} {kind} "
+                       f"mod(mult={mod.mult} lvl={mod.level} wave={mod.wave}) car(mult={car.mult} lvl={car.level} wave={car.wave})")
+            continue
         loop = f"loop={d['loop'][0]}-{d['loop'][1]}" if d["loop"] else "one-shot"
         out.append(f"  {i:2d} {d['name']!r:22} {d['length']:6d} frames {d['bits']}-bit c5={d['c5_speed']} "
                    f"vol={d['volume']} {loop}")
     out.append("")
+    plugs = song.plugins
+    if plugs:
+        out.append("Plugins:")
+        for slot, p in plugs.items():
+            params = p["params"]
+            ptxt = " ".join(f"{k}={v:.2f}" for k, v in params.items()) if isinstance(params, dict) else str(params)
+            where = "(master) " if p["master"] else ""
+            out.append(f"  FX{slot} {p.get('kind', p['library'])} {where}{ptxt}")
+        out.append("")
     if patterns:
         used = [p for p in dict.fromkeys(song.order) if p >= 0]
         unused = [p.index for p in song.patterns if p.index not in used]

@@ -59,3 +59,26 @@ python -m mptscript info scripting/python/examples/chip_demo.it --rows 16
 
 See [AGENTS.md](AGENTS.md) for the full API, the cell syntax, effect tables and
 tips for composing chiptunes.
+
+## Example songs
+
+Each script ships with the module it writes and a rendered `.wav`, so you can listen
+without building anything. Re-running a script reproduces its files byte for byte.
+
+| Script | Sound chip / machine | Output |
+|---|---|---|
+| `examples/minimal.py` | Generic chip waves | `minimal.it` (written to the current directory) |
+| `examples/chip_demo.py` | NES-style, 6 channels | `chip_demo.it`, `.wav` |
+| `examples/edit_existing.py` | Edits `chip_demo` in place | `chip_demo_v2.it`, `.wav` |
+| `examples/overworld_quest.py` | Ricoh 2A03 (NES), adventure march | `.it`, `.wav` |
+| `examples/arena_anthem.py` | Amiga Paula, ProTracker title theme | `.mod`, `.wav` (A500 emulation) |
+| `examples/chipsets/opl3_dos_shooter.py` | Yamaha OPL3 FM (real chip emulation), DOS metal | `.mptm`, `.wav` |
+| `examples/chipsets/gameboy_korobeiniki.py` | Game Boy APU, "Korobeiniki" (trad.) | `.it`, `.wav` |
+| `examples/chipsets/sid_c64_ninja.py` | MOS 6581 SID, 3 voices, filter sweeps | `.it`, `.wav` |
+| `examples/chipsets/ay_msx_infiltration.py` | AY-3-8910 / YM2149 (MSX) | `.it`, `.wav` |
+| `examples/chipsets/ym2612_genesis_speed.py` | YM2612 4-op FM + SN76489 (Mega Drive) | `.it`, `.wav` |
+| `examples/chipsets/snes_spc700_platformer.py` | SPC700 / S-DSP (SNES): BRR + echo | `.it`, `.wav` (32 kHz) |
+| `examples/chipsets/zx_beeper_mountain_king.py` | ZX Spectrum beeper, Grieg (public domain) | `.it`, `.wav` |
+
+All tunes are original compositions in the style of their era, except "Korobeiniki" and
+"In the Hall of the Mountain King", which are public domain.

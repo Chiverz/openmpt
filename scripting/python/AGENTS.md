@@ -157,10 +157,58 @@ The `fx.*` helpers pick the right command for the song's format, so prefer them 
 - **Glides:** a note followed by `fx.tone_porta(n)` on the next note slides between them.
   `fx.vibrato(4, 2)` a few rows into a held note sounds expressive.
 - **Speed and swing:**
-  - Speed 3 or 4 with tempo 125 to 150 suits fast chip music.
-  - `fx.note_delay(t)` on off-beats adds swing.
+  - **BPM = tempo × 24 / (rows_per_beat × speed)**. With 16th-note rows (4 rows per beat), speed 6 makes BPM equal the tempo, while speed 3 doubles it.
+  - Effects and envelopes run per tick, and a tick lasts `2.5 / tempo` seconds. At tempo 125 a tick is 20 ms, one PAL frame, so `Jxy` arpeggios cycle at the C64/NES frame rate.
+  - For triplets, use 6 or 12 rows per beat. For swing, use long/short pairs of 4+2 rows (see the SNES example).
+  - `fx.note_delay(t)` on off-beats also adds swing.
 - **Note ranges:** keep melodies around C-5 to C-7 and bass around C-2 to C-4.
   Pulse and triangle waves work at any pitch.
+
+## Sound chips
+
+OpenMPT emulates two sound chips in its engine:
+- the Amiga's Paula (resampling and A500/A1200 filters)
+- the Yamaha OPL2/OPL3 FM synthesizer
+
+Everything else is recreated with synthesized samples played through OpenMPT's mixer. Built-in effect plugins (echo, reverb, chorus) fill in hardware effects. `examples/` has one song per chip, and `tests/test_chipsets.py` checks every one.
+
+| Chip (machine) | Example | How it's done |
+|---|---|---|
+| Ricoh 2A03 (NES) | `overworld_quest.py` | `chip.pulse` / `chip.triangle` / `chip.noise`, 4 channels |
+| MOS 8364 Paula (Amiga) | `arena_anthem.py` | `.mod` with 8-bit samples; `render(amiga="a500")` |
+| Yamaha OPL3 (PC Sound Blaster) | `chipsets/opl3_dos_shooter.py` | **real FM emulation**: `song.add_opl_instrument(name, opl.PRESETS[...] or opl.patch(...))`, `mptm` (OPL3) or `s3m` (OPL2) |
+| Game Boy APU | `chipsets/gameboy_korobeiniki.py` | 2 pulses, 4-bit `chip.wavetable`, noise; hard L/C/R panning |
+| MOS 6581 SID (C64) | `chipsets/sid_c64_ninja.py` | 3 channels, `chip.pwm`, `chip.sid_drum`, 50 Hz arpeggios, `filter=(cutoff, resonance)` + filter envelope |
+| AY-3-8910 / YM2149 (MSX, Spectrum 128, Atari ST) | `chipsets/ay_msx_infiltration.py` | 50% squares only, `chip.ay_buzzer` bass, log-volume envelopes |
+| YM2612 + SN76489 (Mega Drive) | `chipsets/ym2612_genesis_speed.py` | `chip.fm([FMOp...], algorithm=0..7)` 4-op FM, 8-bit DAC drums |
+| SPC700 / S-DSP (SNES) | `chipsets/snes_spc700_platformer.py` | `chip.brr()` sample grit, 32 kHz cubic render, `add_plugin("echo")` |
+| ZX Spectrum beeper | `chipsets/zx_beeper_mountain_king.py` | one 1-bit square channel |
+
+**OPL FM** (`from mptscript import opl`):
+- A voice is a modulator and a carrier: `opl.patch(opl.Op(mult, level, attack, decay, sustain_level, release, wave, ...), opl.Op(...), feedback=0..7, additive=False)`.
+- `level` is attenuation, so 0 is loudest.
+- Use `wave` 0-3 on OPL2 (S3M); 4-7 are OPL3-only (MPTM).
+- A carrier `mult=2` sounds an octave above the written note.
+- `opl.PRESETS` holds piano, epiano, organ, brass, strings, flute, bass, slap_bass, dist_guitar, overdrive_guitar, synth_lead, bell, kick, snare, hihat and tom.
+- `opl.decode(patch)` reads a loaded song's patch back, and `song.samples[i].opl` holds the bytes.
+
+**Effect plugins** (`from mptscript import plugins`), stored in IT/MPTM/XM:
+- `slot = song.add_plugin("echo", wet_dry=0.3, feedback=0.4, left_delay=plugins.ms(190), master=False)` creates a plugin. All parameters are normalised 0..1, and `plugins.TYPES[kind].params` lists their names.
+- Route sound through it with `song.channels[i].plugin = slot` or `add_instrument(..., plugin=slot)`. `master=True` processes the whole mix.
+- Available kinds: chorus, compressor, distortion, echo, flanger, gargle, i3dl2_reverb, param_eq, waves_reverb, digibooster_echo, symmod_echo.
+
+**Resonant filter** (IT/MPTM):
+- `add_instrument(..., filter=(cutoff 0..127, resonance 0..127))` sets a low-pass filter.
+- Add `pitch_envelope=dict(chip.envelope([...]), filter=True)` to sweep it.
+
+**Composing by beats** (`mptscript.compose`):
+- `line(pattern, ch, [(note, beats), ...], instrument, rows_per_beat=..., gap=rows)` writes notes by length. `"r"` is a rest, and `gap` adds staccato cuts.
+- `compose.T` is a triplet eighth.
+- `Voice(instr, play="F-5", root="E-3", low=, high=)` writes real pitches for samples that aren't recorded at C-5. MOD needs this because ProTracker only plays C-4..B-6.
+
+**Engine messages:**
+- Format limits hit while saving (for example more than 9 OPL channels in S3M) become Python warnings, once per message. The full list is in `song.messages`.
+- `song.limits` includes `has_comments`, `has_plugins` and `has_opl`.
 
 ## Formats
 

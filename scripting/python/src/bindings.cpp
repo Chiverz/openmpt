@@ -17,12 +17,16 @@
 #include "mpt/io_read/filecursor_memory.hpp"
 
 #include "common/FileReader.h"
+#include "common/Logging.h"
 #include "common/mptRandom.h"
 #include "soundlib/AudioReadTarget.h"
+#include "soundlib/Message.h"
 #include "soundlib/ModSequence.h"
 #include "soundlib/Sndfile.h"
 #include "soundlib/mod_specifications.h"
 #include "soundlib/modcommand.h"
+#include "soundlib/plugins/PlugInterface.h"
+#include "soundlib/plugins/PluginManager.h"
 
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
@@ -179,14 +183,46 @@ void EnvelopeFromPy(InstrumentEnvelope &env, const py::dict &d)
 }
 
 
+// Collects the engine's log messages (loader/saver warnings) instead of printing them to stderr.
+class LogCollector final : public ILog
+{
+public:
+	mutable std::vector<std::pair<int, std::string>> messages;
+	void AddToLog(LogLevel level, const mpt::ustring &text) const override
+	{
+		messages.emplace_back(static_cast<int>(level), mpt::ToCharset(mpt::Charset::UTF8, text));
+	}
+};
+
+
 class Module
 {
 public:
+	std::unique_ptr<LogCollector> log;
 	std::unique_ptr<CSoundFile> snd;
 
 	Module()
-		: snd(std::make_unique<CSoundFile>())
+		: log(std::make_unique<LogCollector>())
+		, snd(std::make_unique<CSoundFile>())
 	{
+		snd->SetCustomLog(log.get());
+	}
+
+	~Module()
+	{
+		snd.reset();  // destroy the sound file before the log it points to
+	}
+
+	py::list TakeMessages()
+	{
+		py::list out;
+		for(const auto &[level, text] : log->messages)
+		{
+			const char *name = level <= LogError ? "error" : level == LogWarning ? "warning" : level == LogNotification ? "notification" : "info";
+			out.append(py::make_tuple(name, text));
+		}
+		log->messages.clear();
+		return out;
 	}
 
 	// --- Construction -------------------------------------------------------
@@ -285,8 +321,9 @@ public:
 	void SetTitle(const std::string &t) { snd->SetTitle(t); }
 	std::string GetArtist() const { return mpt::ToCharset(mpt::Charset::UTF8, snd->m_songArtist); }
 	void SetArtist(const std::string &a) { snd->m_songArtist = mpt::ToUnicode(mpt::Charset::UTF8, a); }
-	std::string GetMessage() const { return snd->m_songMessage.GetString(); }
-	void SetMessage(const std::string &m) { snd->m_songMessage.SetRaw(m); }
+	// Song message with '\n' line breaks (formats store CR or CRLF internally).
+	std::string GetMessage() const { return snd->m_songMessage.GetFormatted(SongMessage::leLF); }
+	void SetMessage(const std::string &m) { snd->m_songMessage.SetFormatted(m, SongMessage::leLF); }
 
 	int GetTempo() const { return snd->Order().GetDefaultTempo().GetInt(); }
 	void SetTempo(int t)
@@ -334,6 +371,9 @@ public:
 		d["has_volume_column"] = specs.HasVolCommand(VOLCMD_VOLUME);
 		d["has_note_off"] = specs.hasNoteOff;
 		d["has_note_cut"] = specs.hasNoteCut;
+		d["has_comments"] = specs.hasComments;
+		d["has_plugins"] = specs.supportsPlugins;
+		d["has_opl"] = snd->SupportsOPL();
 		d["has_instruments"] = specs.instrumentsMax > 0;
 		d["note_min"] = specs.noteMin;
 		d["note_max"] = specs.noteMax;
@@ -390,6 +430,7 @@ public:
 		d["volume"] = cs.nVolume;
 		d["mute"] = cs.dwFlags[CHN_MUTE];
 		d["surround"] = cs.dwFlags[CHN_SURROUND];
+		d["plugin"] = static_cast<int>(cs.nMixPlugin);
 		return d;
 	}
 
@@ -406,6 +447,13 @@ public:
 			cs.dwFlags.set(CHN_MUTE, d["mute"].cast<bool>());
 		if(d.contains("surround"))
 			cs.dwFlags.set(CHN_SURROUND, d["surround"].cast<bool>());
+		if(d.contains("plugin"))
+		{
+			const int plug = d["plugin"].cast<int>();
+			if(plug < 0 || plug > int(MAX_MIXPLUGINS))
+				throw py::value_error("plugin number must be 0 (none) or 1.." + std::to_string(MAX_MIXPLUGINS));
+			cs.nMixPlugin = static_cast<PLUGINDEX>(plug);
+		}
 	}
 
 	// --- Order list ---------------------------------------------------------
@@ -685,7 +733,33 @@ public:
 		d["vibrato_sweep"] = smp.nVibSweep;
 		d["vibrato_depth"] = smp.nVibDepth;
 		d["vibrato_rate"] = smp.nVibRate;
+		if(smp.uFlags[CHN_ADLIB])
+			d["opl"] = std::vector<int>(smp.adlib.begin(), smp.adlib.end());
+		else
+			d["opl"] = py::none();
 		return d;
+	}
+
+	// OPL2/OPL3 FM instrument: 12 register bytes (see soundlib/OPL.cpp, OPL::Patch).
+	void SampleSetOPL(int i, const std::vector<int> &patch)
+	{
+		if(!snd->SupportsOPL())
+			throw py::value_error("OPL (FM) instruments need the s3m or mptm format");
+		if(patch.size() != 12)
+			throw py::value_error("OPL patch must have 12 bytes");
+		ModSample &smp = Smp(i, true);
+		OPLPatch p{};
+		for(size_t n = 0; n < 12; n++)
+			p[n] = static_cast<uint8>(std::clamp(patch[n], 0, 255));
+		if(snd->GetType() == MOD_TYPE_S3M)
+		{
+			p[8] &= 0x03;  // S3M (OPL2) only knows waveforms 0-3
+			p[9] &= 0x03;
+		}
+		smp.SetAdlib(true, p);
+		if(!smp.nC5Speed)
+			smp.nC5Speed = 8363;
+		snd->InitOPL();
 	}
 
 	void SampleSet(int i, const py::dict &d)
@@ -807,6 +881,9 @@ public:
 		std::vector<int> nm(ins.NoteMap.begin(), ins.NoteMap.end());
 		d["keyboard"] = kb;
 		d["note_map"] = nm;
+		d["filter_cutoff"] = ins.IsCutoffEnabled() ? py::object(py::int_(ins.GetCutoff())) : py::object(py::none());
+		d["filter_resonance"] = ins.IsResonanceEnabled() ? py::object(py::int_(ins.GetResonance())) : py::object(py::none());
+		d["plugin"] = static_cast<int>(ins.nMixPlug);
 		d["volume_envelope"] = EnvelopeToPy(ins.VolEnv);
 		d["panning_envelope"] = EnvelopeToPy(ins.PanEnv);
 		d["pitch_envelope"] = EnvelopeToPy(ins.PitchEnv);
@@ -855,12 +932,105 @@ public:
 			for(size_t n = 0; n < std::min(nm.size(), ins.NoteMap.size()); n++)
 				ins.NoteMap[n] = static_cast<uint8>(std::clamp(nm[n], int(NOTE_MIN), int(NOTE_MAX)));
 		}
+		if(d.contains("filter_cutoff"))
+		{
+			if(d["filter_cutoff"].is_none())
+				ins.SetCutoff(0, false);
+			else
+				ins.SetCutoff(static_cast<uint8>(std::clamp(d["filter_cutoff"].cast<int>(), 0, 127)), true);
+		}
+		if(d.contains("filter_resonance"))
+		{
+			if(d["filter_resonance"].is_none())
+				ins.SetResonance(0, false);
+			else
+				ins.SetResonance(static_cast<uint8>(std::clamp(d["filter_resonance"].cast<int>(), 0, 127)), true);
+		}
+		if(d.contains("plugin"))
+			ins.nMixPlug = static_cast<PLUGINDEX>(std::clamp(d["plugin"].cast<int>(), 0, int(MAX_MIXPLUGINS)));
 		if(d.contains("volume_envelope"))
 			EnvelopeFromPy(ins.VolEnv, d["volume_envelope"].cast<py::dict>());
 		if(d.contains("panning_envelope"))
 			EnvelopeFromPy(ins.PanEnv, d["panning_envelope"].cast<py::dict>());
 		if(d.contains("pitch_envelope"))
 			EnvelopeFromPy(ins.PitchEnv, d["pitch_envelope"].cast<py::dict>());
+	}
+
+	// --- Plugins (built-in DMO emulations, DigiBooster/SymMOD echo, LFO) -----
+
+	SNDMIXPLUGIN &Plug(int slot)
+	{
+		if(slot < 1 || slot > int(MAX_MIXPLUGINS))
+			throw py::index_error("plugin slot must be 1.." + std::to_string(MAX_MIXPLUGINS));
+		return snd->m_MixPlugins[slot - 1];
+	}
+
+	void PluginSet(int slot, uint32 id1, uint32 id2, const std::string &library, const std::string &name,
+		const std::vector<float> &params, bool master, bool dryMix)
+	{
+		if(!snd->GetModSpecifications().supportsPlugins)
+			throw py::value_error("this format cannot store plugins (use it, mptm or xm)");
+		SNDMIXPLUGIN &plugin = Plug(slot);
+		plugin.Destroy();
+		plugin = SNDMIXPLUGIN{};
+		plugin.Info.dwPluginId1 = static_cast<int32>(id1);
+		plugin.Info.dwPluginId2 = static_cast<int32>(id2);
+		plugin.Info.szLibraryName = library;
+		plugin.Info.szName = name;
+		plugin.SetMasterEffect(master);
+		plugin.SetDryMix(dryMix);
+		plugin.Info.gain = 10;
+		CreateMixPluginProc(plugin, *snd);
+		if(!plugin.pMixPlugin)
+		{
+			plugin = SNDMIXPLUGIN{};
+			throw py::value_error("plugin '" + library + "' is not available in this build");
+		}
+		if(!plugin.pMixPlugin->GetNumInputChannels())
+			plugin.SetExpandedMix(false);
+		const auto numParams = plugin.pMixPlugin->GetNumParameters();
+		for(size_t i = 0; i < params.size() && i < static_cast<size_t>(numParams); i++)
+			plugin.pMixPlugin->SetParameter(static_cast<PlugParamIndex>(i), std::clamp(params[i], 0.0f, 1.0f));
+		plugin.pMixPlugin->SaveAllParameters();
+		snd->SetMixLevels(snd->GetMixLevels());  // recalculates plugin mix levels
+	}
+
+	void PluginSetParam(int slot, int index, float value)
+	{
+		SNDMIXPLUGIN &plugin = Plug(slot);
+		if(!plugin.pMixPlugin)
+			throw py::index_error("no plugin in slot " + std::to_string(slot));
+		if(index < 0 || index >= static_cast<int>(plugin.pMixPlugin->GetNumParameters()))
+			throw py::index_error("plugin parameter index out of range");
+		plugin.pMixPlugin->SetParameter(static_cast<PlugParamIndex>(index), std::clamp(value, 0.0f, 1.0f));
+		plugin.pMixPlugin->SaveAllParameters();
+	}
+
+	py::object PluginGet(int slot)
+	{
+		SNDMIXPLUGIN &plugin = Plug(slot);
+		if(!plugin.IsValidPlugin())
+			return py::none();
+		py::dict d;
+		d["id1"] = static_cast<uint32>(plugin.Info.dwPluginId1);
+		d["id2"] = static_cast<uint32>(plugin.Info.dwPluginId2);
+		d["library"] = std::string(plugin.Info.szLibraryName);
+		d["name"] = std::string(plugin.Info.szName);
+		d["master"] = plugin.IsMasterEffect();
+		d["loaded"] = plugin.pMixPlugin != nullptr;
+		std::vector<float> params;
+		if(plugin.pMixPlugin)
+			for(PlugParamIndex i = 0; i < plugin.pMixPlugin->GetNumParameters(); i++)
+				params.push_back(plugin.pMixPlugin->GetParameter(i));
+		d["params"] = params;
+		return d;
+	}
+
+	void PluginRemove(int slot)
+	{
+		SNDMIXPLUGIN &plugin = Plug(slot);
+		plugin.Destroy();
+		plugin = SNDMIXPLUGIN{};
 	}
 
 	// --- Rendering ----------------------------------------------------------
@@ -1029,10 +1199,17 @@ PYBIND11_MODULE(_core, m)
 		.def("sample_get_data", &Module::SampleGetData)
 		.def("sample_get", &Module::SampleGet)
 		.def("sample_set", &Module::SampleSet)
+		.def("sample_set_opl", &Module::SampleSetOPL, py::arg("index"), py::arg("patch"))
+		.def("plugin_set", &Module::PluginSet, py::arg("slot"), py::arg("id1"), py::arg("id2"), py::arg("library"),
+			py::arg("name"), py::arg("params"), py::arg("master") = false, py::arg("dry_mix") = false)
+		.def("plugin_set_param", &Module::PluginSetParam)
+		.def("plugin_get", &Module::PluginGet)
+		.def("plugin_remove", &Module::PluginRemove)
 		.def_property_readonly("num_instruments", &Module::NumInstruments)
 		.def("instrument_new", &Module::InstrumentNew, py::arg("index"), py::arg("sample") = 0)
 		.def("instrument_get", &Module::InstrumentGet)
 		.def("instrument_set", &Module::InstrumentSet)
+		.def("take_messages", &Module::TakeMessages, "Engine log messages since the last call: [(level, text)]")
 		.def("duration", &Module::Duration)
 		.def("render", &Module::Render, py::arg("samplerate") = 44100, py::arg("channels") = 2, py::arg("interpolation") = 3,
 			py::arg("stereo_separation") = 128, py::arg("max_seconds") = 600.0, py::arg("repeat") = 0, py::arg("amiga") = 0);
