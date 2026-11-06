@@ -17,8 +17,9 @@ import mptscript as mpt
 from mptscript import chip, fx
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, "out", "chip_demo.it")
-dst = os.path.join(os.path.dirname(src), "chip_demo_v2.it")
+OUT = os.environ.get("MPTSCRIPT_OUT", HERE)
+src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(OUT, "chip_demo.it")
+dst = os.path.join(OUT, "chip_demo_v2.it")
 
 song = mpt.Song.load(src)
 print(song.describe(patterns=False))

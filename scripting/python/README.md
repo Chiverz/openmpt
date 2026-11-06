@@ -54,7 +54,7 @@ print(song.render("hello.wav"))
 
 ```sh
 python -m mptscript run scripting/python/examples/chip_demo.py --play
-python -m mptscript info scripting/python/examples/out/chip_demo.it --rows 16
+python -m mptscript info scripting/python/examples/chip_demo.it --rows 16
 ```
 
 See [AGENTS.md](AGENTS.md) for the full API, the cell syntax, effect tables and

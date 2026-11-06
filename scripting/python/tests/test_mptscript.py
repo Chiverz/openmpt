@@ -238,10 +238,10 @@ EXAMPLES = os.path.join(os.path.dirname(__file__), "..", "examples")
 
 
 def test_examples_run(tmp_path):
-    env = dict(os.environ)
+    env = dict(os.environ, MPTSCRIPT_OUT=str(tmp_path))
     subprocess.run([sys.executable, "-m", "mptscript", "run", os.path.join(EXAMPLES, "chip_demo.py")], check=True, env=env,
                    capture_output=True)
-    out = os.path.join(EXAMPLES, "out")
+    out = str(tmp_path)
     assert os.path.exists(os.path.join(out, "chip_demo.it"))
     subprocess.run([sys.executable, "-m", "mptscript", "run", os.path.join(EXAMPLES, "edit_existing.py")], check=True,
                    env=env, capture_output=True)

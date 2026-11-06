@@ -29,7 +29,7 @@ from mptscript import fx, notes
 from mptscript.chip import Wave
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
+OUT = os.environ.get("MPTSCRIPT_OUT", HERE)  # songs are written next to this script
 rnd = random.Random(1990)
 
 AMIGA_C5 = 8363            # ProTracker sample rate at C-5 (finetune 0)
@@ -419,6 +419,6 @@ for pat in song.patterns:
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     song.save(os.path.join(OUT, "arena_anthem.mod"))
-    report = song.render(os.path.join(OUT, "arena_anthem.wav"), amiga="a500", repeat=1)
+    report = song.render(os.path.join(OUT, "arena_anthem.wav"), amiga="a500")
     print(f"one pass: {song.duration:.1f}s; loop restarts at the first groove")
     print(report)

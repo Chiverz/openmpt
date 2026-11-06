@@ -1,8 +1,8 @@
 """chip_demo.py - a ~30 second NES-style loop built entirely from code.
 
 Run:  python -m mptscript run examples/chip_demo.py --play
-Out:  examples/out/chip_demo.it  (open in OpenMPT to edit by hand)
-      examples/out/chip_demo.wav
+Out:  examples/chip_demo.it  (open in OpenMPT to edit by hand)
+      examples/chip_demo.wav
 
 Structure: A minor, i-VI-III-VII (Am F C G), 150 BPM, 16 rows per bar.
   pattern 0  intro   - arpeggio chords, bass, drums
@@ -17,7 +17,7 @@ import mptscript as mpt
 from mptscript import chip, fx
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
+OUT = os.environ.get("MPTSCRIPT_OUT", HERE)  # songs are written next to this script
 
 song = mpt.Song.new("it", channels=6, title="Chip Demo", artist="mptscript", tempo=150, speed=6)
 song.rows_per_beat, song.rows_per_measure = 4, 16

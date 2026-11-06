@@ -125,8 +125,9 @@ def _env_exp(i: int, n: int, k: float) -> float:
 
 
 def kick(rate: int = 22050, duration: float = 0.30, start_hz: float = 160.0, end_hz: float = 42.0,
-         click: float = 0.3, amplitude: float = 0.95, crush: int = 0) -> Wave:
+         click: float = 0.3, amplitude: float = 0.95, crush: int = 0, seed: int = 5) -> Wave:
     """Pitch-swept sine kick drum."""
+    rnd = random.Random(seed)
     n = int(rate * duration)
     data, phase = [], 0.0
     for i in range(n):
@@ -135,7 +136,7 @@ def kick(rate: int = 22050, duration: float = 0.30, start_hz: float = 160.0, end
         phase += 2 * math.pi * f / rate
         v = math.sin(phase) * _env_exp(i, n, 5.0)
         if i < rate * 0.004:
-            v += click * (random.random() * 2 - 1)
+            v += click * (rnd.random() * 2 - 1)
         data.append(max(-1.0, min(1.0, v * amplitude)))
     return _finish(Wave(data, c5_speed=rate, name="kick"), crush)
 

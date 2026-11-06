@@ -24,7 +24,7 @@ import mptscript as mpt
 from mptscript import chip, fx, notes
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
+OUT = os.environ.get("MPTSCRIPT_OUT", HERE)  # songs are written next to this script
 
 ROWS_PER_BEAT = 12
 BAR = 4 * ROWS_PER_BEAT
@@ -207,7 +207,6 @@ b2.set_effect(b2.rows - 1, BASS, fx.position_jump(1))
 if __name__ == "__main__":
     os.makedirs(OUT, exist_ok=True)
     song.save(os.path.join(OUT, "overworld_quest.it"))
-    # Render the intro plus the loop twice, so the seam can be heard.
-    report = song.render(os.path.join(OUT, "overworld_quest.wav"), repeat=1)
+    report = song.render(os.path.join(OUT, "overworld_quest.wav"))
     print(f"one pass: {song.duration:.1f}s (intro + loop)")
     print(report)

@@ -8,7 +8,7 @@ next script can load it again. Think of it as `bpy` for chiptune.
 ## Workflow
 
 1. **New track:** write a script (start from `examples/chip_demo.py`) that builds
-   the song, calls `song.save("out/name.it")` and prints `song.render("out/name.wav")`.
+   the song, calls `song.save("name.it")` and prints `song.render("name.wav")`.
    Run it with `python -m mptscript run script.py` (add `--play` to hear it on this
    machine).
 2. **Check the render report** instead of listening:
@@ -35,8 +35,8 @@ next script can load it again. Think of it as `bpy` for chiptune.
 ```python
 song = mpt.Song.new("it", channels=6, title="Name", tempo=150, speed=6, rows=64)
 song = mpt.Song.load("song.it")          # reads any format OpenMPT supports
-song.save("out/song.it")                 # always in the song's own format
-report = song.render("out/song.wav", interpolation="sinc", normalize=True, repeat=0, amiga=None)
+song.save("song.it")                     # always in the song's own format
+report = song.render("song.wav", interpolation="sinc", normalize=True, repeat=0, amiga=None)
 print(song.describe(max_rows=16))        # text dump for reading a song
 song.duration                            # seconds, one pass through the order list
 ```
