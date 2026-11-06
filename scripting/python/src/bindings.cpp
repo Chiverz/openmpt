@@ -219,7 +219,7 @@ public:
 		s.m_nSamplePreAmp = s.m_nVSTiVolume = 48;
 		s.m_nDefaultRowsPerBeat = 4;
 		s.m_nDefaultRowsPerMeasure = 16;
-		s.SetupMODPanning(true);
+		s.SetupMODPanning(type == MOD_TYPE_MOD);
 		if(type == MOD_TYPE_MOD)
 		{
 			s.m_SongFlags.set(SONG_ISAMIGA | SONG_AMIGALIMITS | SONG_PT_MODE);
