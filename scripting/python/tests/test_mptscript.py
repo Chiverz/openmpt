@@ -249,4 +249,8 @@ def test_examples_run(tmp_path):
                        check=True, capture_output=True, text=True)
     assert "Echo" in r.stdout
     subprocess.run([sys.executable, os.path.join(EXAMPLES, "minimal.py")], check=True, cwd=tmp_path, capture_output=True)
+    subprocess.run([sys.executable, "-m", "mptscript", "run", os.path.join(EXAMPLES, "overworld_quest.py")], check=True,
+                   env=env, capture_output=True)
+    quest = mpt.Song.load(os.path.join(out, "overworld_quest.it"))
+    assert abs(quest.duration - 41.6) < 0.01  # intro + one pass of the loop (position jump back to order 1)
     assert (tmp_path / "minimal.wav").exists()
